@@ -1,0 +1,15 @@
+[project]
+name = "kaleidoscope"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "aiohttp>=3.13.5",
+    "aiortc>=1.14.0",
+    "fastapi[standard]>=0.135.1",
+    "opencv-python>=4.13.0.92",
+    "timm>=1.0.26",
+    "torch>=2.11.0",
+    "torchvision>=0.26.0",
+]

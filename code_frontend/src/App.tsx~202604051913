@@ -1,0 +1,182 @@
+import { useEffect, useRef, useState } from 'react'
+import * as THREE from 'three';
+import reactLogo from './assets/react.svg'
+import viteLogo from './assets/vite.svg'
+import heroImg from './assets/hero.png'
+import './App.css'
+
+
+const constraints: MediaStreamConstraints = {
+  audio: false,
+  video: true,
+}
+
+function App() {
+  const remoteVideoRef = useRef<HTMLVideoElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    if (!canvasRef.current || !remoteVideoRef.current) return
+
+    const scene = new THREE.Scene()
+    const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1)
+
+    const renderer = new THREE.WebGLRenderer({
+      canvas: canvasRef.current
+    })
+    renderer.setSize(640, 480)
+
+    // video -> texture
+    const texture = new THREE.VideoTexture(videoRef.current)
+    const depthTexture = new THREE.VideoTexture(remoteVideoRef.current)
+
+    const material = new THREE.ShaderMaterial({
+      uniforms: {
+        uTexture: { value: texture },
+        uDepth: { value: depthTexture },
+        uTime: {value: 0},
+      },
+      vertexShader: `
+        varying vec2 vUv;
+        void main() {
+          vUv = uv;
+          gl_Position = vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform sampler2D uTexture;
+        uniform sampler2D uDepth;
+        uniform float uTime;
+
+        varying vec2 vUv;
+
+        float rand(vec2 co) {
+          return fract(sin(dot(co, vec2(12.9898,78.233))) * 43758.5453);
+        }
+
+        void main() {
+          vec4 color = texture2D(uTexture, vUv);
+          float depth = texture2D(uDepth, vUv).r;
+          depth = 1.0 - depth;
+
+          // 粒子のサイズ
+          float scale = mix(25.0, 6.0, depth);
+          // ランダム方向（＋下方向）
+          vec2 cell = floor(vUv * scale);
+          float r = rand(cell);
+
+          float dx = (rand(cell + 1.0) - 0.5) * 0.2;
+          float dy = -0.3 + (rand(cell + 2.0) - 0.5) * 0.1;
+
+          // 時間で移動
+          vec2 offset = vec2(dx, dy) * uTime;
+          float speed = 0.2 * (1.0 - depth);
+          offset *= speed;
+          vec2 uv = vUv - offset;
+
+          // 粒子生成
+          vec2 grid = fract(uv * scale);
+          vec2 center = grid - 0.5;
+
+          float angle = rand(cell) * 6.28 + uTime;
+          mat2 rot = mat2(cos(angle), -sin(angle), sin(angle), cos(angle));
+          center = rot * center;
+
+          float dist = length(center);
+
+          center.x *= 1.2;
+          float petal = smoothstep(0.4, 0.2, dist);
+
+          // 粒子強度
+          float particle = petal * rand(cell);
+
+          // 深度で制御
+          float fog = smoothstep(0.2, 0.8, depth);
+          float effect = particle * fog;
+
+
+          // 色変化
+          vec3 effectColor  = vec3(0.3, 0.5, 0.8);
+
+          // 合成
+          vec3 finalColor = mix(color.rgb, effectColor, effect);
+          finalColor += particle * 0.2;
+
+          gl_FragColor = vec4(finalColor, 1.0);
+        }
+      `,
+    })
+
+    const geometry = new THREE.PlaneGeometry(2, 2)
+    const mesh = new THREE.Mesh(geometry, material)
+    scene.add(mesh)
+
+    const start = async () => {
+      const stream = await navigator.mediaDevices.getUserMedia(constraints)
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream
+      }
+
+      const pc = new RTCPeerConnection()
+      pc.ontrack = (event) => {
+        if (remoteVideoRef.current) {
+          remoteVideoRef.current.srcObject = event.streams[0]
+        }
+      }
+      // 送信
+      stream.getTracks().forEach(track => {
+        pc.addTrack(track, stream)
+      })
+
+      // offer作成
+      const offer = await pc.createOffer()
+      await pc.setLocalDescription(offer)
+
+      // FastAPIに送信
+      const res = await fetch("http://localhost:8000/offer", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          sdp: pc.localDescription?.sdp,
+          type: pc.localDescription?.type
+        }),
+      })
+      const answer = await res.json()
+      await pc.setRemoteDescription(answer)
+    }
+
+    const startTime = Date.now()
+    const render = () => {
+      requestAnimationFrame(render)
+
+      const elapsed = (Date.now() - startTime) / 1000
+      material.uniforms.uTime.value = elapsed
+      renderer.render(scene, camera)
+    }
+
+    start()
+    render()
+  }, []);
+
+  return (
+    <div className='App'>
+      hello world!!
+      <p>Web Camera Sample</p>
+      <div style={{display: 'grid'}}>
+        <div>
+          <h2>Local</h2>
+          <video autoPlay playsInline={true} ref={videoRef} style={{ width: '45%'}} />
+          <h2>Processed（from backend）</h2>
+          <video autoPlay playsInline={true} ref={remoteVideoRef} style={{width: '45%'}} />
+          <h2>Processed（from three.js）</h2>
+          <canvas ref={canvasRef} />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+export default App

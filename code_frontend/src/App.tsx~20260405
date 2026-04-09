@@ -1,0 +1,74 @@
+import { useEffect, useRef, useState } from 'react'
+import { PlaneGeometry } from 'three'
+import reactLogo from './assets/react.svg'
+import viteLogo from './assets/vite.svg'
+import heroImg from './assets/hero.png'
+import './App.css'
+
+
+const constraints: MediaStreamConstraints = {
+  audio: false,
+  video: true,
+}
+
+function App() {
+  const remoteVideoRef = useRef<HTMLVideoElement>(null)
+  const videoRef = useRef<HTMLVideoElement>(null);
+
+  useEffect(() => {
+    const start = async () => {
+      const stream = await navigator.mediaDevices.getUserMedia(constraints)
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream
+      }
+
+      const pc = new RTCPeerConnection()
+      pc.ontrack = (event) => {
+        if (remoteVideoRef.current) {
+          remoteVideoRef.current.srcObject = event.streams[0]
+        }
+      }
+      // 送信
+      stream.getTracks().forEach(track => {
+        pc.addTrack(track, stream)
+      })
+
+      // offer作成
+      const offer = await pc.createOffer()
+      await pc.setLocalDescription(offer)
+
+      // FastAPIに送信
+      const res = await fetch("http://localhost:8000/offer", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          sdp: pc.localDescription?.sdp,
+          type: pc.localDescription?.type
+        }),
+      })
+      const answer = await res.json()
+      await pc.setRemoteDescription(answer)
+    }
+
+    start()
+  }, [])
+
+  return (
+    <div className='App'>
+      hello world!!
+      <p>Web Camera Sample</p>
+      <div style={{display: 'grid'}}>
+        <div>
+          <h2>Local</h2>
+          <video autoPlay playsInline={true} ref={videoRef} style={{ width: '45%'}} />
+          <h2>Processed（from backend）</h2>
+          <video autoPlay playsInline={true} ref={remoteVideoRef} style={{width: '45%'}} />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+export default App
