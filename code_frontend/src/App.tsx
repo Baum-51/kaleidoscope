@@ -56,57 +56,54 @@ function App() {
         }
 
         void main() {
+          vec2 uv = vUv;
+          uv += vec2(
+            sin(uv.y * 5.0 + uTime) * 0.02,
+            -uTime * 0.1
+          );
+
           vec4 color = texture2D(uTexture, vUv);
           float depth = texture2D(uDepth, vUv).r;
           depth = 1.0 - depth;
 
           // 粒子のサイズ
-          float scale = mix(25.0, 6.0, depth);
-          // ランダム方向（＋下方向）
-          vec2 cell = floor(vUv * scale);
-          // float r = rand(cell);
-          float noise = fract(
-            sin(dot(vUv * scale, vec2(12.9898,78.233))) 
-            * 43758.5453
+          float scale = mix(30.0, 8.0, depth);
+          vec2 gv = uv * scale;
+
+          // セル
+          vec2 id = floor(gv);
+
+          float t = uTime;
+          float wind = (rand(id + 2.0) - 0.5) * 0.1;
+          float fall = t * (0.2 + rand(id)) * 0.1;
+          vec2 motion = vec2(wind * t, fall);
+
+          vec2 gv2 = (vUv + motion) * scale;
+          vec2 id2 = floor(gv2);
+          vec2 f2 = fract(gv2);
+          float particleDepth = rand(id2);
+          
+          // 奥に寄せる
+          // particleDepth = pow(particleDepth, 2.0);
+          float particleSize = mix(0.15, 0.05, particleDepth);
+
+          vec2 offset2 = vec2(
+            rand(id2),
+            rand(id2 + 1.0)
           );
 
-          float dx = (rand(cell + 1.0) - 0.5) * 0.2;
-          float dy = -0.3 + (rand(cell + 2.0) - 0.5) * 0.1;
+          float d2 = length(f2 - offset2);
+          float particle = smoothstep(particleSize, 0.0, particleDepth);
+          // float particle = smoothstep(0.1, 0.0, d2);
+          if (depth < particle) {
+            particle = 0.0;
+          }
 
-          // 時間で移動
-          vec2 offset = vec2(dx, dy) * uTime;
-          float speed = 0.2 * (1.0 - depth);
-          offset *= speed;
-          vec2 uv = vUv - offset;
+          float sparkle = 0.7 + 0.3 * sin(uTime + rand(id2)*10.0);
+          particle *= sparkle;
 
-          // 粒子生成
-          vec2 grid = fract(uv * scale);
-          vec2 center = grid - 0.5;
-
-          float angle = rand(cell) * 6.28 + uTime;
-          mat2 rot = mat2(cos(angle), -sin(angle), sin(angle), cos(angle));
-          center = rot * center;
-
-          float dist = length(center);
-
-          center.x *= 1.2;
-          float petal = smoothstep(0.4, 0.2, dist);
-
-          // 粒子強度
-          float particle = petal * rand(cell);
-
-          // 深度で制御
-          float fog = smoothstep(0.2, 0.8, depth);
-          float effect = particle * fog;
-
-
-          // 色変化
-          vec3 effectColor  = vec3(0.3, 0.5, 0.8);
-
-          // 合成
-          vec3 finalColor = mix(color.rgb, effectColor, effect);
-          finalColor += particle * 0.2;
-
+          vec3 snowColor = vec3(0.7, 0.7, 1.0);
+          vec3 finalColor = color.rgb + particle * snowColor;
           gl_FragColor = vec4(finalColor, 1.0);
         }
       `,
