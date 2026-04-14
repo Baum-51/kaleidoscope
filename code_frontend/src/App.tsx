@@ -84,8 +84,7 @@ function App() {
           float particleDepth = rand(id2);
           
           // 奥に寄せる
-          // particleDepth = pow(particleDepth, 2.0);
-          float particleSize = mix(0.15, 0.05, particleDepth);
+          particleDepth = pow(particleDepth, 2.0);
 
           vec2 offset2 = vec2(
             rand(id2),
@@ -93,11 +92,11 @@ function App() {
           );
 
           float d2 = length(f2 - offset2);
-          float particle = smoothstep(particleSize, 0.0, particleDepth);
-          // float particle = smoothstep(0.1, 0.0, d2);
-          if (depth < particle) {
-            particle = 0.0;
-          }
+
+          float particleSize = mix(0.15, 0.05, particleDepth);
+          float particle = smoothstep(particleSize, 0.0, d2);
+          float occlusion = smoothstep(particleDepth - 0.05, particleDepth, depth);
+          particle *= occlusion;
 
           float sparkle = 0.7 + 0.3 * sin(uTime + rand(id2)*10.0);
           particle *= sparkle;
