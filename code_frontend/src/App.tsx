@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three';
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import heroImg from './assets/hero.png'
 import './App.css'
+
+import { vertexShader } from './shaders/vertex';
+import { fragmentShader } from './shaders/fragment';
 
 
 const constraints: MediaStreamConstraints = {
@@ -27,6 +27,7 @@ function App() {
     })
     renderer.setSize(640, 480)
 
+
     // video -> texture
     const texture = new THREE.VideoTexture(videoRef.current)
     const depthTexture = new THREE.VideoTexture(remoteVideoRef.current)
@@ -36,77 +37,16 @@ function App() {
         uTexture: { value: texture },
         uDepth: { value: depthTexture },
         uTime: {value: 0},
+        resolution: { value: new THREE.Vector2(canvasRef.current.width, canvasRef.current.height) },
       },
-      vertexShader: `
-        varying vec2 vUv;
-        void main() {
-          vUv = uv;
-          gl_Position = vec4(position, 1.0);
-        }
-      `,
-      fragmentShader: `
-        uniform sampler2D uTexture;
-        uniform sampler2D uDepth;
-        uniform float uTime;
-
-        varying vec2 vUv;
-
-        float rand(vec2 co) {
-          return fract(sin(dot(co, vec2(12.9898,78.233))) * 43758.5453);
-        }
-
-        void main() {
-          vec2 uv = vUv;
-          uv += vec2(
-            sin(uv.y * 5.0 + uTime) * 0.02,
-            -uTime * 0.1
-          );
-
-          vec4 color = texture2D(uTexture, vUv);
-          float depth = texture2D(uDepth, vUv).r;
-          depth = 1.0 - depth;
-
-          // 粒子のサイズ
-          float scale = mix(30.0, 8.0, depth);
-          vec2 gv = uv * scale;
-
-          // セル
-          vec2 id = floor(gv);
-
-          float t = uTime;
-          float wind = (rand(id + 2.0) - 0.5) * 0.1;
-          float fall = t * (0.2 + rand(id)) * 0.1;
-          vec2 motion = vec2(wind * t, fall);
-
-          vec2 gv2 = (vUv + motion) * scale;
-          vec2 id2 = floor(gv2);
-          vec2 f2 = fract(gv2);
-          float particleDepth = rand(id2);
-          
-          // 奥に寄せる
-          particleDepth = pow(particleDepth, 2.0);
-
-          vec2 offset2 = vec2(
-            rand(id2),
-            rand(id2 + 1.0)
-          );
-
-          float d2 = length(f2 - offset2);
-
-          float particleSize = mix(0.15, 0.05, particleDepth);
-          float particle = smoothstep(particleSize, 0.0, d2);
-          float occlusion = smoothstep(particleDepth - 0.05, particleDepth, depth);
-          particle *= occlusion;
-
-          float sparkle = 0.7 + 0.3 * sin(uTime + rand(id2)*10.0);
-          particle *= sparkle;
-
-          vec3 snowColor = vec3(0.7, 0.7, 1.0);
-          vec3 finalColor = color.rgb + particle * snowColor;
-          gl_FragColor = vec4(finalColor, 1.0);
-        }
-      `,
+      vertexShader: vertexShader,
+      fragmentShader: fragmentShader,
     })
+
+    material.uniforms.resolution.value.set(
+      renderer.domElement.width,
+      renderer.domElement.height,
+    )
 
     const geometry = new THREE.PlaneGeometry(2, 2)
     const mesh = new THREE.Mesh(geometry, material)
@@ -159,6 +99,7 @@ function App() {
 
     start()
     render()
+
   }, []);
 
   return (
