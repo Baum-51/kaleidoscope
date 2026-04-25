@@ -7,13 +7,12 @@ import numpy as np
 from av import VideoFrame
 
 
-from multiprocessing import Process, Value, Array
-import ctypes
-import time
+import asyncio
 
 from utils.common_logger import get_logger
+from core.load_model_lifespan import lifespan
 
-app = FastAPI()
+app = FastAPI(lifespan=lifespan)
 pcs = set()
 
 logger = get_logger(__name__)
@@ -26,74 +25,51 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# MiDaS
-model_type = "MiDaS_small"
-midas = torch.hub.load("intel-isl/MiDaS", model_type)
-midas.eval()
-transform = torch.hub.load("intel-isl/MiDaS", "transforms").small_transform
-
 frame_size = 192
 
 class DepthTrack(VideoStreamTrack):
-    def __init__(self, track):
+    def __init__(self, track, app: FastAPI):
         super().__init__()
         self.track = track
+        self.app = app
         
         # フレーム共有（固定サイズ）
-        self.frame_array = Array(ctypes.c_uint8, frame_size*frame_size*3)
-        self.result_array = Array(ctypes.c_int8, frame_size*frame_size*3)
+        self.latest_frame = np.zeros((frame_size, frame_size, 3), dtype=np.uint8)
+        self.current_task: asyncio.Task | None = None
+        self.latest_result = None
         
-        self.has_new_frame = Value("b", False)
-        
-        # worker起動
-        self.process = Process (
-            target=self.worker,
-            daemon=True
-        )
-        
-        self.process.start()
-    
     async def recv(self):
         frame = await self.track.recv()
         
         img = frame.to_ndarray(format="bgr24")
         img = cv2.resize(img, (frame_size, frame_size))
+        self.latest_frame = img
         
-        # 共有メモリにコピー
-        np_array = np.frombuffer(self.frame_array.get_obj(), dtype=np.uint8)
-        np_array[:] = img.flatten()
+        # 深度推定実行
+        if self.current_task is None or self.current_task.done():
+            self.current_task = asyncio.create_task(self.process_worker())
         
-        self.has_new_frame.value = True
-        
-        # 結果取得
-        result_np = np.frombuffer(self.result_array.get_obj(), dtype=np.uint8)
-        result_img = result_np.reshape((frame_size, frame_size, 3))
+        result_img = self.latest_result if self.latest_result is not None else img
         
         new_frame = VideoFrame.from_ndarray(result_img, format="bgr24")
         new_frame.pts = frame.pts
         new_frame.time_base = frame.time_base
-        
         return new_frame
-    
-    def worker(self):
+        
+    async def process_worker(self):
         while True:
-            if not self.has_new_frame.value:
+            if self.latest_frame is None:
+                await asyncio.sleep(0.01)
                 continue
-            
-            self.has_new_frame.value = False
-            
-            img = np.frombuffer(self.frame_array.get_obj(), dtype=np.uint8)
-            img = img.reshape((frame_size, frame_size, 3))
-            
-            # --- 推論 ---
-            result = self.depth_process(img)
-            
-            result_np = np.frombuffer(self.result_array.get_obj(), dtype=np.uint8)
-            result_np[:] = result.flatten()
-            time.sleep(0.03)  # 約30FPS制限
+            img = self.latest_frame
+            result = await asyncio.to_thread(self.depth_process, img)
+            self.latest_result = result
     
     def depth_process(self, img):
         # --- 深度推定 ---
+        midas = self.app.state.midas
+        transform = self.app.state.transform
+        
         input_batch = transform(img)
         
         with torch.no_grad():
@@ -129,7 +105,7 @@ async def offer(request: Request):
     def on_track(track):
         logger.info("on_track")
         if track.kind == "video":
-            depth_track = DepthTrack(track)
+            depth_track = DepthTrack(track, app=app)
             pc.addTrack(depth_track)
         @track.on("ended")
         async def on_ended():
