@@ -62,8 +62,10 @@ class DepthTrack(VideoStreamTrack):
                 await asyncio.sleep(0.01)
                 continue
             img = self.latest_frame
-            result = await asyncio.to_thread(self.depth_process, img)
-            self.latest_result = result
+            # result = await asyncio.to_thread(self.depth_process, img)
+            # self.latest_result = result
+            depth, seg = await asyncio.to_thread(self.process_frame, img)
+            self.latest_result = depth
     
     def depth_process(self, img):
         # --- 深度推定 ---
@@ -88,10 +90,50 @@ class DepthTrack(VideoStreamTrack):
         depth_img = cv2.cvtColor(depth_img, cv2.COLOR_GRAY2BGR)
         return depth_img
     
-    def stop(self):
-        if self.process.is_alive():
-            self.process.terminate()
-            self.process.join()
+    def process_frame(self, img):
+        # depth
+        midas_model = self.app.state.midas
+        transform = self.app.state.transform
+        
+        input_batch = transform(img)
+        
+        with torch.no_grad():
+            depth_pred = midas_model(input_batch)
+        
+        depth = depth_pred.squeeze().cpu().numpy()
+        depth = (depth - depth.min()) / (depth.max() - depth.min())
+        
+        depth_img = (depth * 255).astype(np.uint8)
+        depth_img = cv2.cvtColor(depth_img, cv2.COLOR_GRAY2BGR)
+        
+        # segmentation
+        seg_processor = self.app.state.seg_processor
+        seg_model = self.app.state.seg_model
+        
+        inputs = seg_processor(images=img, return_tensors="pt")
+        with torch.no_grad():
+            outputs = seg_model(**inputs)
+        
+        logits = outputs.logits
+        seg = logits.argmax(dim=1)[0].cpu().numpy()
+        seg_img = self.colorize(seg)
+        
+        return depth_img, seg_img
+
+    def colorize(self, seg):
+        palette = {
+            0: [0, 0, 0],       # background
+            3: [0, 255, 0],     # tree
+            2: [255, 0, 0],     # building
+            1: [0, 0, 255],     # road
+        }
+
+        color = np.zeros((seg.shape[0], seg.shape[1], 3), dtype=np.uint8)
+
+        for k, v in palette.items():
+            color[seg == k] = v
+
+        return color
     
 
 @app.post("/offer")
