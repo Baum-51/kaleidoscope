@@ -52,6 +52,8 @@ export const fragmentShader = `
     uniform float uTime;
     uniform vec2 resolution;
 
+    uniform sampler2D uSeg;
+
     varying vec2 vUv;
 
     ${common}
@@ -96,7 +98,15 @@ export const fragmentShader = `
 
         float edge = length(vec2(gx, gy));
 
-
+        float seg = texture2D(uSeg, vUv).r;
+        vec3 segColor = texture2D(uTexture, vUv).rgb;
+        if(seg < 0.33) {
+            segColor *= vec3(0.5, 0.7, 1.2);
+        } else if (seg < 0.66) {
+            segColor *= vec3(1.2, 0.8, 0.6);
+        } else {
+            segColor *= vec3(0.6, 1.2, 0.7);    
+        }
 
         vec3 snowColor = vec3(0.7, 0.7, 1.0);
         vec3 finalColor = color.rgb - edge + particle * snowColor * 2.0;

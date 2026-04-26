@@ -15,6 +15,25 @@ function App() {
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  // const depthRef = useRef<THREE.DataTexture>(null)
+  // const segRef = useRef<THREE.DataTexture>(null)
+  const depthRef = useRef<THREE.DataTexture>(
+    new THREE.DataTexture(
+      new Float32Array(192*192).fill(0.0),
+      192,
+      192,
+      THREE.RedFormat,
+      THREE.FloatType
+    )
+  )
+  const segRef = useRef<THREE.DataTexture>(
+    new THREE.DataTexture(
+      new Uint8Array(192*192).fill(0),
+      192,
+      192,
+      THREE.RedFormat,
+    )
+  )
 
   useEffect(() => {
     if (!canvasRef.current || !remoteVideoRef.current) return
@@ -31,13 +50,17 @@ function App() {
     // video -> texture
     const texture = new THREE.VideoTexture(videoRef.current)
     const depthTexture = new THREE.VideoTexture(remoteVideoRef.current)
+    const depthValue = depthRef.current
+    const segValue = segRef.current
 
     const material = new THREE.ShaderMaterial({
       uniforms: {
         uTexture: { value: texture },
-        uDepth: { value: depthTexture },
+        // uDepth: { value: depthTexture },
+        uDepth: { value: depthValue },
         uTime: {value: 0},
         resolution: { value: new THREE.Vector2(canvasRef.current.width, canvasRef.current.height) },
+        uSeg: { value: segValue },
       },
       vertexShader: vertexShader,
       fragmentShader: fragmentShader,
@@ -59,6 +82,7 @@ function App() {
       }
 
       const pc = new RTCPeerConnection()
+      const channel = pc.createDataChannel("result")
       pc.ontrack = (event) => {
         if (remoteVideoRef.current) {
           remoteVideoRef.current.srcObject = event.streams[0]
@@ -68,6 +92,19 @@ function App() {
       stream.getTracks().forEach(track => {
         pc.addTrack(track, stream)
       })
+      channel.onmessage = (e) => {
+        const data = JSON.parse(e.data)
+        if (depthRef.current) {
+          const depth = data['depth'].flat()
+          depthRef.current.image.data?.set(new Float32Array(depth))
+          depthRef.current.needsUpdate = true
+        }
+        if (segRef.current) {
+          const seg = data['seg'].flat()
+          segRef.current.image.data?.set(new Uint8Array(seg))
+          segRef.current.needsUpdate = true
+        }
+      }
 
       // offer作成
       const offer = await pc.createOffer()

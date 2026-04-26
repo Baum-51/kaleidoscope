@@ -8,6 +8,7 @@ from av import VideoFrame
 
 
 import asyncio
+import json
 
 from utils.common_logger import get_logger
 from core.load_model_lifespan import lifespan
@@ -27,11 +28,12 @@ app.add_middleware(
 
 frame_size = 192
 
-class DepthTrack(VideoStreamTrack):
-    def __init__(self, track, app: FastAPI):
+class PictureTrack(VideoStreamTrack):
+    def __init__(self, track, app: FastAPI, pc):
         super().__init__()
         self.track = track
         self.app = app
+        self.pc = pc
         
         # フレーム共有（固定サイズ）
         self.latest_frame = np.zeros((frame_size, frame_size, 3), dtype=np.uint8)
@@ -65,32 +67,19 @@ class DepthTrack(VideoStreamTrack):
             # result = await asyncio.to_thread(self.depth_process, img)
             # self.latest_result = result
             depth, seg = await asyncio.to_thread(self.process_frame, img)
-            self.latest_result = depth
-    
-    def depth_process(self, img):
-        # --- 深度推定 ---
-        midas = self.app.state.midas
-        transform = self.app.state.transform
-        
-        input_batch = transform(img)
-        
-        with torch.no_grad():
-            prediction = midas(input_batch)
-            prediction = torch.nn.functional.interpolate(
-                prediction.unsqueeze(1),
-                size=img.shape[:2],
-                mode="bicubic",
-                align_corners=False,
-            ).squeeze()
-            
-        depth = prediction.cpu().numpy()
-        depth = (depth - depth.min()) / (depth.max() - depth.min())
-        
-        depth_img = (depth * 255).astype(np.uint8)
-        depth_img = cv2.cvtColor(depth_img, cv2.COLOR_GRAY2BGR)
-        return depth_img
+            depth_img = (depth * 255).astype(np.uint8)
+            depth_img = cv2.cvtColor(depth_img, cv2.COLOR_GRAY2BGR)
+            self.latest_result = depth_img
+            data = {
+                "depth": depth.tolist(),
+                "seg": seg.tolist(),
+            }
+            if self.pc.channel:
+                self.pc.channel.send(json.dumps(data))
+                # self.pc.channel.send("hello world")
     
     def process_frame(self, img):
+        h, w = img.shape[:2]
         # depth
         midas_model = self.app.state.midas
         transform = self.app.state.transform
@@ -102,9 +91,7 @@ class DepthTrack(VideoStreamTrack):
         
         depth = depth_pred.squeeze().cpu().numpy()
         depth = (depth - depth.min()) / (depth.max() - depth.min())
-        
-        depth_img = (depth * 255).astype(np.uint8)
-        depth_img = cv2.cvtColor(depth_img, cv2.COLOR_GRAY2BGR)
+        depth = cv2.resize(depth, (w, h), interpolation=cv2.INTER_LINEAR)
         
         # segmentation
         seg_processor = self.app.state.seg_processor
@@ -115,10 +102,15 @@ class DepthTrack(VideoStreamTrack):
             outputs = seg_model(**inputs)
         
         logits = outputs.logits
+        logits = torch.nn.functional.interpolate(
+            logits,
+            size=(h, w),
+            mode="bilinear",
+            align_corners=False
+        )
         seg = logits.argmax(dim=1)[0].cpu().numpy()
-        seg_img = self.colorize(seg)
         
-        return depth_img, seg_img
+        return depth, seg
 
     def colorize(self, seg):
         palette = {
@@ -141,18 +133,23 @@ async def offer(request: Request):
     params = await request.json()
     
     pc = RTCPeerConnection()
+    channel = pc.createDataChannel("json")
     pcs.add(pc)
     
     @pc.on("track")
     def on_track(track):
         logger.info("on_track")
         if track.kind == "video":
-            depth_track = DepthTrack(track, app=app)
-            pc.addTrack(depth_track)
+            image_track = PictureTrack(track, app=app, pc=pc)
+            pc.addTrack(image_track)
         @track.on("ended")
         async def on_ended():
             logger.info("ended track")
-            depth_track.stop()
+            image_track.stop()
+    
+    @pc.on("datachannel")
+    def on_datachannel(channel):
+        pc.channel = channel
     
     await pc.setRemoteDescription(
         RTCSessionDescription(sdp=params["sdp"], type=params["type"])
