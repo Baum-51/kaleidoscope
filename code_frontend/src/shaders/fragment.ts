@@ -46,6 +46,16 @@ const snow = `
     }
 `
 
+const getSegColor = `
+        vec3 getColor(int label) {
+            if (label == 0) return vec3(0.2, 0.4, 1.0); // 空
+            if (label == 1) return vec3(1.0, 0.8, 0.6); // 建物
+            if (label == 2) return vec3(0.2, 1.0, 0.4); // 植物
+            if (label == 3) return vec3(0.5, 0.5, 0.5); // 道
+            return vec3(1.0);
+        }
+`
+
 export const fragmentShader = `
     uniform sampler2D uTexture;
     uniform sampler2D uDepth;
@@ -58,6 +68,7 @@ export const fragmentShader = `
 
     ${common}
     ${snow}
+    ${getSegColor}
 
     void main() {
         vec2 uv = vUv;
@@ -99,17 +110,16 @@ export const fragmentShader = `
         float edge = length(vec2(gx, gy));
 
         float seg = texture2D(uSeg, vUv).r;
-        vec3 segColor = texture2D(uTexture, vUv).rgb;
-        if(seg < 0.33) {
-            segColor *= vec3(0.5, 0.7, 1.2);
-        } else if (seg < 0.66) {
-            segColor *= vec3(1.2, 0.8, 0.6);
-        } else {
-            segColor *= vec3(0.6, 1.2, 0.7);    
-        }
+        int label = int(seg * 255.0);
+
+        vec3 baseColor = texture2D(uTexture, vUv).rgb;
+
+        vec3 segColor = baseColor * getColor(label);;
+
+        
 
         vec3 snowColor = vec3(0.7, 0.7, 1.0);
-        vec3 finalColor = color.rgb - edge + particle * snowColor * 2.0;
+        vec3 finalColor = color.rgb - edge + particle * snowColor * 2.0 + segColor;
         gl_FragColor = vec4(finalColor, 1.0);
     }
 `
