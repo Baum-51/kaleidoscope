@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef } from 'react'
 import * as THREE from 'three';
 import './App.css'
 
@@ -49,7 +49,7 @@ function App() {
 
     // video -> texture
     const texture = new THREE.VideoTexture(videoRef.current)
-    const depthTexture = new THREE.VideoTexture(remoteVideoRef.current)
+    // const depthTexture = new THREE.VideoTexture(remoteVideoRef.current)
     const depthValue = depthRef.current
     const segValue = segRef.current
 
